@@ -21,6 +21,13 @@ When run with `-Apply`, it moves bulky local Codex state out of `.codex` into co
 - Old `.codex\sessions` JSONL files
 - `session_index.jsonl` so Codex can rebuild it
 
+Each successful apply run also writes recovery and audit files into the run's cold-storage directory:
+
+- `manifest.json`: exact source and destination for moved files/folders
+- `report.json`: terminal-style summary in JSON
+- `restore-codex-cpu-reset.ps1`: dry-run-by-default restore helper
+- `errors.json`: only created when one or more move/start/stop errors occur
+
 The tool does **not** intentionally read, print, or move:
 
 - `auth.json`
@@ -64,7 +71,23 @@ powershell -ExecutionPolicy Bypass -File .\codex-cpu-reset.ps1
 
 This prints the actions the tool would take without moving anything.
 
-### 2. Quick Download
+### 2. PowerShell WhatIf
+
+The script also supports native PowerShell `-WhatIf` when `-Apply` is present:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\codex-cpu-reset.ps1 -Apply -WhatIf
+```
+
+This exercises the apply path through PowerShell's `ShouldProcess` system, but still does not move anything.
+
+You can also request confirmation prompts:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\codex-cpu-reset.ps1 -Apply -Confirm
+```
+
+### 3. Quick Download
 
 If GitHub is available on the machine, you can download the latest script with:
 
@@ -72,7 +95,7 @@ If GitHub is available on the machine, you can download the latest script with:
 Invoke-WebRequest -Uri "https://raw.githubusercontent.com/schmidtkaylan39-cpu/codex-cpu-reset-tool/main/codex-cpu-reset.ps1" -OutFile ".\codex-cpu-reset.ps1"
 ```
 
-### 3. Conservative Fix
+### 4. Conservative Fix
 
 Keep the last 30 days of active sessions:
 
@@ -80,7 +103,7 @@ Keep the last 30 days of active sessions:
 powershell -ExecutionPolicy Bypass -File .\codex-cpu-reset.ps1 -Apply -KeepDays 30 -StopCodexFirst -RestartCodex -ObserveSeconds 60
 ```
 
-### 4. Aggressive Fix
+### 5. Aggressive Fix
 
 Keep only recent active sessions from today:
 
@@ -88,7 +111,7 @@ Keep only recent active sessions from today:
 powershell -ExecutionPolicy Bypass -File .\codex-cpu-reset.ps1 -Apply -KeepDays 1 -StopCodexFirst -RestartCodex -ObserveSeconds 60
 ```
 
-### 5. Keep Specific Threads
+### 6. Keep Specific Threads
 
 If you know a thread id, preserve it even if it is older than `KeepDays`:
 
@@ -106,6 +129,8 @@ powershell -ExecutionPolicy Bypass -File .\codex-cpu-reset.ps1 -Apply -KeepDays 
 
 ```powershell
 -Apply                 Actually move data. Without this, the script is dry run only.
+-WhatIf                Preview apply actions through PowerShell ShouldProcess.
+-Confirm               Prompt before ShouldProcess-backed actions.
 -KeepDays 7            Keep active sessions from the last N days.
 -KeepThreadId ID       Keep one or more specific thread ids.
 -StopCodexFirst        Stop Codex before moving files.
@@ -153,6 +178,31 @@ You can also provide your own launcher:
 powershell -ExecutionPolicy Bypass -File .\codex-cpu-reset.ps1 -Apply -KeepDays 30 -StopCodexFirst -CodexStartCommand "Start-Process 'C:\Path\To\Codex.exe'" -ObserveSeconds 60
 ```
 
+## Restore A Run
+
+Every apply run creates a restore helper inside the cold-storage run directory.
+
+First do a restore dry run:
+
+```powershell
+cd "$env:USERPROFILE\CodexColdStorage\codex-cpu-reset-YYYYMMDD-HHMMSS"
+powershell -ExecutionPolicy Bypass -File .\restore-codex-cpu-reset.ps1
+```
+
+Then restore:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\restore-codex-cpu-reset.ps1 -Apply
+```
+
+If a target file already exists, restore skips it by default. To overwrite files, add `-Force`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\restore-codex-cpu-reset.ps1 -Apply -Force
+```
+
+The restore helper also supports `-WhatIf` and `-Confirm`.
+
 ## When To Use This
 
 Use this when all of these are true:
@@ -177,6 +227,12 @@ If Codex still idles above 20-30% after this reset, the issue may be in the Code
 1. Try a full Codex Desktop profile reset.
 2. Reinstall Codex Desktop.
 3. Report the issue with CPU samples and process command lines.
+
+## Designed For
+
+- Windows 10 / Windows 11
+- Windows PowerShell 5.1
+- PowerShell 7.x
 
 ## Disclaimer
 
