@@ -13,6 +13,8 @@
     worktrees, or secrets.
   - Rebuilds Codex's session index by moving session_index.jsonl aside.
   - Writes manifest.json, report.json, and a dry-run restore script on apply.
+  - Can optionally add Defender exclusions and disable Windows Search indexing
+    when those system services are the real CPU source.
 
   The old conversations are not deleted. They are moved to:
     <home>\CodexColdStorage\codex-cpu-reset-<timestamp>
@@ -39,6 +41,9 @@ param(
   [string]$ColdStorageRoot = (Join-Path $HOME 'CodexColdStorage'),
   [string]$CodexAppId = $(if ($env:CODEX_APP_ID) { $env:CODEX_APP_ID } else { 'OpenAI.Codex_2p2nqsd0c76g0!App' }),
   [string]$CodexStartCommand = '',
+  [switch]$AddDefenderExclusions,
+  [int]$DefenderScanCpuLimit = 20,
+  [switch]$DisableWindowsSearch,
   [switch]$AllowNonStandardCodexHome,
   [switch]$SkipSessions,
   [switch]$SkipArchivedSessions,
@@ -47,6 +52,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$script:AddDefenderExclusionsRequested = [bool]$AddDefenderExclusions
+$script:DefenderScanCpuLimitValue = $DefenderScanCpuLimit
+$script:DisableWindowsSearchRequested = [bool]$DisableWindowsSearch
 
 function Write-Step {
   param([Parameter(Mandatory = $true)][string]$Message)
@@ -472,6 +480,179 @@ function Join-PathIfBase {
   return (Join-Path $Base $Child)
 }
 
+function Test-CurrentUserAdministrator {
+  $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+  $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+  return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Get-ExistingFullPath {
+  param([string[]]$Path)
+
+  $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+  foreach ($item in $Path) {
+    if ([string]::IsNullOrWhiteSpace($item)) { continue }
+    if (-not (Test-Path -LiteralPath $item)) { continue }
+
+    $fullPath = [System.IO.Path]::GetFullPath($item)
+    if ($seen.Add($fullPath)) {
+      $fullPath
+    }
+  }
+}
+
+function Get-CodexProcessPath {
+  $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+  foreach ($process in @(Get-Process -Name Codex,codex -ErrorAction SilentlyContinue)) {
+    try {
+      $path = [string]$process.Path
+      if ([string]::IsNullOrWhiteSpace($path)) { continue }
+      if ($seen.Add($path)) {
+        $path
+      }
+    }
+    catch {
+      Add-ResetError -Stage 'inspect:codex-process-path' -Source ([string]$process.Id) -Message $_.Exception.Message
+    }
+  }
+}
+
+function Get-DefenderExclusionPath {
+  $candidates = @(
+    $CodexHome,
+    $ColdStorageRoot,
+    (Join-PathIfBase -Base $HOME -Child 'Documents\Codex'),
+    (Join-PathIfBase -Base $env:LOCALAPPDATA -Child 'Codex'),
+    (Join-PathIfBase -Base $env:APPDATA -Child 'Codex'),
+    (Join-PathIfBase -Base $env:LOCALAPPDATA -Child 'OpenAI\Codex')
+  )
+
+  Get-ExistingFullPath -Path $candidates
+}
+
+function Add-DefenderExclusionMitigation {
+  [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
+  param()
+
+  if (-not $script:AddDefenderExclusionsRequested) { return }
+
+  $paths = @(Get-DefenderExclusionPath)
+  $processPaths = @(Get-CodexProcessPath)
+  $pathCount = $paths.Count
+  $processCount = $processPaths.Count
+
+  if (-not $Apply -or $WhatIfPreference) {
+    Add-Report -Item 'defender path exclusions' -Action 'would add' -Files $pathCount -Bytes 0 -Destination ($paths -join '; ')
+    Add-Report -Item 'defender process exclusions' -Action 'would add' -Files $processCount -Bytes 0 -Destination ($processPaths -join '; ')
+    Add-Report -Item 'defender scan cpu limit' -Action "would set to $script:DefenderScanCpuLimitValue" -Files 1 -Bytes 0 -Destination 'ScanAvgCPULoadFactor'
+    return
+  }
+
+  if (-not (Test-CurrentUserAdministrator)) {
+    $message = 'Run PowerShell as Administrator to add Microsoft Defender exclusions.'
+    Add-ResetError -Stage 'defender-exclusions' -Message $message
+    Add-Report -Item 'defender exclusions' -Action 'requires administrator' -Files ($pathCount + $processCount) -Bytes 0
+    return
+  }
+
+  if (-not (Get-Command Add-MpPreference -ErrorAction SilentlyContinue)) {
+    $message = 'Add-MpPreference is unavailable on this system.'
+    Add-ResetError -Stage 'defender-exclusions' -Message $message
+    Add-Report -Item 'defender exclusions' -Action 'unavailable' -Files ($pathCount + $processCount) -Bytes 0
+    return
+  }
+
+  $addedPaths = 0
+  $addedProcesses = 0
+  foreach ($path in $paths) {
+    if (-not $PSCmdlet.ShouldProcess($path, 'Add Microsoft Defender path exclusion')) { continue }
+
+    try {
+      Add-MpPreference -ExclusionPath $path -ErrorAction Stop
+      $addedPaths++
+    }
+    catch {
+      Add-ResetError -Stage 'defender-path-exclusion' -Source $path -Message $_.Exception.Message
+    }
+  }
+
+  foreach ($path in $processPaths) {
+    if (-not $PSCmdlet.ShouldProcess($path, 'Add Microsoft Defender process exclusion')) { continue }
+
+    try {
+      Add-MpPreference -ExclusionProcess $path -ErrorAction Stop
+      $addedProcesses++
+    }
+    catch {
+      Add-ResetError -Stage 'defender-process-exclusion' -Source $path -Message $_.Exception.Message
+    }
+  }
+
+  if ($script:DefenderScanCpuLimitValue -ge 0 -and $script:DefenderScanCpuLimitValue -le 100) {
+    if ($PSCmdlet.ShouldProcess('Microsoft Defender', "Set scan CPU limit to $script:DefenderScanCpuLimitValue")) {
+      try {
+        Set-MpPreference -ScanAvgCPULoadFactor $script:DefenderScanCpuLimitValue -ErrorAction Stop
+        Add-Report -Item 'defender scan cpu limit' -Action "set to $script:DefenderScanCpuLimitValue" -Files 1 -Bytes 0 -Destination 'ScanAvgCPULoadFactor'
+      }
+      catch {
+        Add-ResetError -Stage 'defender-scan-cpu-limit' -Message $_.Exception.Message
+        Add-Report -Item 'defender scan cpu limit' -Action 'failed' -Files 1 -Bytes 0
+      }
+    }
+  }
+  else {
+    Add-Report -Item 'defender scan cpu limit' -Action 'skipped invalid value' -Files 1 -Bytes 0 -Destination ([string]$script:DefenderScanCpuLimitValue)
+  }
+
+  Add-Report -Item 'defender path exclusions' -Action 'added' -Files $addedPaths -Bytes 0 -Destination ($paths -join '; ')
+  Add-Report -Item 'defender process exclusions' -Action 'added' -Files $addedProcesses -Bytes 0 -Destination ($processPaths -join '; ')
+}
+
+function Set-WindowsSearchMitigation {
+  [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
+  param()
+
+  if (-not $script:DisableWindowsSearchRequested) { return }
+
+  if (-not $Apply -or $WhatIfPreference) {
+    Add-Report -Item 'windows search service' -Action 'would disable' -Files 1 -Bytes 0 -Destination 'WSearch'
+    return
+  }
+
+  if (-not (Test-CurrentUserAdministrator)) {
+    $message = 'Run PowerShell as Administrator to disable Windows Search indexing.'
+    Add-ResetError -Stage 'windows-search' -Message $message
+    Add-Report -Item 'windows search service' -Action 'requires administrator' -Files 1 -Bytes 0 -Destination 'WSearch'
+    return
+  }
+
+  try {
+    $service = Get-Service -Name WSearch -ErrorAction Stop
+  }
+  catch {
+    Add-Report -Item 'windows search service' -Action 'absent' -Files 0 -Bytes 0 -Destination 'WSearch'
+    return
+  }
+
+  if (-not $PSCmdlet.ShouldProcess('WSearch', 'Stop and disable Windows Search indexer')) {
+    Add-Report -Item 'windows search service' -Action 'whatif' -Files 1 -Bytes 0 -Destination 'WSearch'
+    return
+  }
+
+  try {
+    if ($service.Status -ne 'Stopped') {
+      Stop-Service -Name WSearch -Force -ErrorAction Stop
+    }
+    Set-Service -Name WSearch -StartupType Disabled -ErrorAction Stop
+    Stop-Process -Name SearchIndexer,SearchProtocolHost,SearchFilterHost -Force -ErrorAction SilentlyContinue
+    Add-Report -Item 'windows search service' -Action 'disabled' -Files 1 -Bytes 0 -Destination 'WSearch'
+  }
+  catch {
+    Add-ResetError -Stage 'windows-search' -Message $_.Exception.Message
+    Add-Report -Item 'windows search service' -Action 'failed' -Files 1 -Bytes 0 -Destination 'WSearch'
+  }
+}
+
 function Start-CodexApp {
   [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
   param(
@@ -739,6 +920,9 @@ elseif ($StopCodexFirst -and -not $Apply) {
 }
 
 Write-Step 'Collecting reset actions'
+
+Set-WindowsSearchMitigation
+Add-DefenderExclusionMitigation
 
 if (-not $SkipDesktopLogs) {
   Move-DesktopLog

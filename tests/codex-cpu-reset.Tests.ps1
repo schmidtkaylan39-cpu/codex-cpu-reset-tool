@@ -151,4 +151,24 @@ Describe 'codex-cpu-reset.ps1' {
     Test-Path -LiteralPath (Join-Path $fake.Codex 'cache\cache.txt') | Should -BeTrue
     Test-Path -LiteralPath (Join-Path $fake.Codex 'session_index.jsonl') | Should -BeTrue
   }
+
+  It 'accepts Windows Search mitigation as an opt-in dry run' {
+    $fake = New-FakeCodexHome
+    $script:CurrentFakeRoot = $fake.Root
+
+    $output = & $script:ResetScript -DisableWindowsSearch -CodexHome $fake.Codex -ColdStorageRoot $fake.Cold -SkipDesktopLogs 6>&1 | Out-String
+
+    $output | Should -Match 'windows search service'
+    $output | Should -Match 'would disable'
+  }
+
+  It 'accepts Defender exclusions as an opt-in dry run' {
+    $fake = New-FakeCodexHome
+    $script:CurrentFakeRoot = $fake.Root
+
+    $output = & $script:ResetScript -AddDefenderExclusions -CodexHome $fake.Codex -ColdStorageRoot $fake.Cold -SkipDesktopLogs 6>&1 | Out-String
+
+    $output | Should -Match 'defender path exclusions'
+    $output | Should -Match 'would add'
+  }
 }

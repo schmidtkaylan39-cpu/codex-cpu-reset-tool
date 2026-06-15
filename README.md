@@ -28,6 +28,13 @@ Each successful apply run also writes recovery and audit files into the run's co
 - `restore-codex-cpu-reset.ps1`: dry-run-by-default restore helper
 - `errors.json`: only created when one or more move/start/stop errors occur
 
+The tool also includes opt-in system mitigations for cases where the CPU spike is caused by Windows services reacting to Codex's large local data:
+
+- `-AddDefenderExclusions`: add Microsoft Defender exclusions for Codex state folders and running Codex executables.
+- `-DisableWindowsSearch`: stop and disable the Windows Search indexing service (`WSearch`).
+
+These are never enabled by default.
+
 The tool does **not** intentionally read, print, or move:
 
 - `auth.json`
@@ -56,6 +63,11 @@ If you later need an old session, you can manually move the relevant `.jsonl` fi
 - Codex Desktop installed
 
 Administrator privileges are not normally required because the script only moves files in the current user's profile.
+
+Administrator privileges are required for:
+
+- `-AddDefenderExclusions`
+- `-DisableWindowsSearch`
 
 ## Usage
 
@@ -125,6 +137,38 @@ You can pass multiple ids:
 powershell -ExecutionPolicy Bypass -File .\codex-cpu-reset.ps1 -Apply -KeepDays 1 -KeepThreadId THREAD_ID_1,THREAD_ID_2 -StopCodexFirst -RestartCodex -ObserveSeconds 60
 ```
 
+### 7. If Defender Is The CPU Source
+
+If Task Manager shows `Antimalware Service Executable` / `MsMpEng.exe` repeatedly scanning Codex data, first preview:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\codex-cpu-reset.ps1 -AddDefenderExclusions
+```
+
+Then run PowerShell as Administrator and apply:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\codex-cpu-reset.ps1 -Apply -AddDefenderExclusions
+```
+
+This adds exclusions for existing Codex state folders and currently running Codex executable paths. It also sets Defender's average scan CPU limit to `20` by default.
+
+### 8. If Windows Search Is The CPU Source
+
+If Task Manager shows `Microsoft Windows Search Indexer`, `SearchIndexer.exe`, `SearchProtocolHost.exe`, or `SearchFilterHost.exe` repeatedly returning after Codex cleanup, first preview:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\codex-cpu-reset.ps1 -DisableWindowsSearch
+```
+
+Then run PowerShell as Administrator and apply:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\codex-cpu-reset.ps1 -Apply -DisableWindowsSearch
+```
+
+This stops `WSearch` and changes it to `Disabled`. Windows Start menu search still works for apps and settings, but file content indexing/search can become slower.
+
 ## Useful Options
 
 ```powershell
@@ -140,6 +184,11 @@ powershell -ExecutionPolicy Bypass -File .\codex-cpu-reset.ps1 -Apply -KeepDays 
 -ColdStorageRoot PATH  Override cold storage. Defaults to %USERPROFILE%\CodexColdStorage.
 -CodexAppId ID         Override the Windows AppsFolder id used for restart.
 -CodexStartCommand CMD Custom command used to start Codex after reset.
+-AddDefenderExclusions
+                       Add Microsoft Defender exclusions for Codex folders/processes. Requires Administrator with -Apply.
+-DefenderScanCpuLimit 20
+                       Set Defender scan CPU limit when -AddDefenderExclusions is used.
+-DisableWindowsSearch Stop and disable Windows Search indexing. Requires Administrator with -Apply.
 -AllowNonStandardCodexHome
                        Allow CodexHome paths that do not end in .codex.
 -SkipSessions          Do not move old sessions.
@@ -218,11 +267,18 @@ Do not use this as your first debugging step if:
 
 - A real Codex task is currently running.
 - You need all old threads visible in the sidebar at the same time.
-- Your high CPU is actually from Python, Node, PowerShell, Defender, Chrome, or another process.
+- Your high CPU is actually from Python, Node, PowerShell, Chrome, or another unrelated process.
+- You want to preserve Windows Search file-content indexing. Do not use `-DisableWindowsSearch` in that case.
 
 ## If CPU Is Still High
 
-If Codex still idles above 20-30% after this reset, the issue may be in the Codex Desktop profile, installation, or current Codex version. The next steps are:
+If Codex still idles above 20-30% after this reset, first check which process is actually busy:
+
+- `codex.exe` / `Codex.exe`: continue with Codex profile reset or reinstall steps.
+- `MsMpEng.exe`: try `-AddDefenderExclusions` from an Administrator PowerShell.
+- `SearchIndexer.exe` / `SearchProtocolHost.exe`: try `-DisableWindowsSearch` from an Administrator PowerShell.
+
+If Codex itself is still the CPU source, the issue may be in the Codex Desktop profile, installation, or current Codex version. The next steps are:
 
 1. Try a full Codex Desktop profile reset.
 2. Reinstall Codex Desktop.
