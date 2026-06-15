@@ -13,7 +13,7 @@
   - Rebuilds Codex's session index by moving session_index.jsonl aside.
 
   The old conversations are not deleted. They are moved to:
-    %USERPROFILE%\CodexColdStorage\codex-cpu-reset-<timestamp>
+    <home>\CodexColdStorage\codex-cpu-reset-<timestamp>
 
 .EXAMPLE
   # Check what would be moved.
@@ -36,8 +36,11 @@ param(
   [switch]$StopCodexFirst,
   [switch]$RestartCodex,
   [int]$ObserveSeconds = 0,
-  [string]$CodexHome = (Join-Path $env:USERPROFILE ".codex"),
-  [string]$ColdStorageRoot = (Join-Path $env:USERPROFILE "CodexColdStorage"),
+  [string]$CodexHome = $(if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }),
+  [string]$ColdStorageRoot = (Join-Path $HOME "CodexColdStorage"),
+  [string]$CodexAppId = $(if ($env:CODEX_APP_ID) { $env:CODEX_APP_ID } else { "OpenAI.Codex_2p2nqsd0c76g0!App" }),
+  [string]$CodexStartCommand = "",
+  [switch]$AllowNonStandardCodexHome,
   [switch]$SkipSessions,
   [switch]$SkipArchivedSessions,
   [switch]$SkipBackups,
@@ -208,6 +211,11 @@ function Move-OldSessions {
 }
 
 function Move-DesktopLogs {
+  if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+    Add-Report -Item "desktop logs before today" -Action "LOCALAPPDATA unavailable" -Files 0 -Bytes 0
+    return
+  }
+
   $logRoot = Join-Path $env:LOCALAPPDATA "Codex\Logs"
   if (-not (Test-Path -LiteralPath $logRoot)) {
     Add-Report -Item "desktop logs before today" -Action "absent" -Files 0 -Bytes 0
@@ -285,14 +293,63 @@ function Stop-CodexProcesses {
   Start-Sleep -Seconds 3
 }
 
+function Join-IfBasePath {
+  param(
+    [string]$Base,
+    [string]$Child
+  )
+  if ([string]::IsNullOrWhiteSpace($Base)) { return $null }
+  return (Join-Path $Base $Child)
+}
+
 function Start-CodexApp {
   Write-Step "Starting Codex app"
-  try {
-    Start-Process explorer.exe "shell:AppsFolder\OpenAI.Codex_2p2nqsd0c76g0!App"
+
+  if (-not [string]::IsNullOrWhiteSpace($CodexStartCommand)) {
+    try {
+      Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-Command", $CodexStartCommand)
+      return
+    }
+    catch {
+      Write-Warning "Custom CodexStartCommand failed: $($_.Exception.Message)"
+    }
   }
-  catch {
-    Write-Warning "Could not start Codex automatically. Open Codex manually from Start Menu."
+
+  if (-not [string]::IsNullOrWhiteSpace($CodexAppId)) {
+    try {
+      Start-Process explorer.exe "shell:AppsFolder\$CodexAppId"
+      Start-Sleep -Seconds 5
+      if (@(Get-Process -Name Codex,codex -ErrorAction SilentlyContinue).Count -gt 0) {
+        return
+      }
+    }
+    catch {
+      Write-Warning "AppsFolder launch failed: $($_.Exception.Message)"
+    }
   }
+
+  $shortcutRoots = @(
+    (Join-IfBasePath -Base $env:APPDATA -Child "Microsoft\Windows\Start Menu\Programs"),
+    (Join-IfBasePath -Base $env:ProgramData -Child "Microsoft\Windows\Start Menu\Programs")
+  ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and (Test-Path -LiteralPath $_) }
+
+  $shortcut = $null
+  foreach ($root in $shortcutRoots) {
+    $shortcut = Get-ChildItem -LiteralPath $root -Recurse -Force -File -Filter "*Codex*.lnk" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($shortcut) { break }
+  }
+
+  if ($shortcut) {
+    try {
+      Start-Process -FilePath $shortcut.FullName
+      return
+    }
+    catch {
+      Write-Warning "Start Menu shortcut launch failed: $($_.Exception.Message)"
+    }
+  }
+
+  Write-Warning "Could not start Codex automatically. Open Codex manually from the Start Menu."
 }
 
 $script:Report = New-Object System.Collections.Generic.List[object]
@@ -302,7 +359,7 @@ $ColdStorageRoot = [System.IO.Path]::GetFullPath($ColdStorageRoot)
 if (-not (Test-Path -LiteralPath $CodexHome)) {
   throw "Codex home not found: $CodexHome"
 }
-if (-not ($CodexHome.EndsWith("\.codex") -or $CodexHome.EndsWith("/.codex"))) {
+if (-not $AllowNonStandardCodexHome -and -not ($CodexHome.EndsWith("\.codex") -or $CodexHome.EndsWith("/.codex"))) {
   throw "Refusing to operate on a non-.codex home: $CodexHome"
 }
 if ($ColdStorageRoot.StartsWith($CodexHome, [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -318,6 +375,7 @@ Write-Host "CodexHome:        $CodexHome"
 Write-Host "Cold storage:     $script:ColdRunRoot"
 Write-Host "KeepDays:         $KeepDays"
 Write-Host "KeepThreadId:     $($KeepThreadId -join ', ')"
+Write-Host "CodexAppId:       $CodexAppId"
 
 Write-Step "Current Codex CPU sample"
 Measure-CodexCpu -Seconds 5 | Select-Object -First 10 | Format-Table -AutoSize
@@ -372,7 +430,7 @@ if (-not $Apply) {
   Write-Host ""
   Write-Host "Dry run only. Re-run with -Apply to move the data." -ForegroundColor Yellow
   Write-Host "Suggested aggressive fix:"
-  Write-Host "  powershell -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Apply -KeepDays 1 -StopCodexFirst -RestartCodex -ObserveSeconds 60"
+  Write-Host "  powershell -ExecutionPolicy Bypass -File .\codex-cpu-reset.ps1 -Apply -KeepDays 1 -StopCodexFirst -RestartCodex -ObserveSeconds 60"
   exit 0
 }
 

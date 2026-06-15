@@ -2,7 +2,9 @@
 
 A conservative PowerShell tool for Windows users who see Codex Desktop using high CPU while idle, especially when Task Manager shows `codex.exe app-server` consuming CPU even when no task appears to be running.
 
-This tool was created after diagnosing a real case where Codex Desktop stayed around 30% CPU at idle because local Codex state had grown very large: desktop logs, session history, archived sessions, backups, caches, and local indexes.
+This tool is designed to work across normal Windows user accounts. It uses `%CODEX_HOME%` when that environment variable is set, otherwise it defaults to `%USERPROFILE%\.codex`.
+
+It was created after diagnosing a real case where Codex Desktop stayed around 30% CPU at idle because local Codex state had grown very large: desktop logs, session history, archived sessions, backups, caches, and local indexes.
 
 ## What It Does
 
@@ -46,6 +48,8 @@ If you later need an old session, you can manually move the relevant `.jsonl` fi
 - PowerShell 5 or newer
 - Codex Desktop installed
 
+Administrator privileges are not normally required because the script only moves files in the current user's profile.
+
 ## Usage
 
 Download `codex-cpu-reset.ps1`, then open PowerShell.
@@ -60,7 +64,15 @@ powershell -ExecutionPolicy Bypass -File .\codex-cpu-reset.ps1
 
 This prints the actions the tool would take without moving anything.
 
-### 2. Conservative Fix
+### 2. Quick Download
+
+If GitHub is available on the machine, you can download the latest script with:
+
+```powershell
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/schmidtkaylan39-cpu/codex-cpu-reset-tool/main/codex-cpu-reset.ps1" -OutFile ".\codex-cpu-reset.ps1"
+```
+
+### 3. Conservative Fix
 
 Keep the last 30 days of active sessions:
 
@@ -68,7 +80,7 @@ Keep the last 30 days of active sessions:
 powershell -ExecutionPolicy Bypass -File .\codex-cpu-reset.ps1 -Apply -KeepDays 30 -StopCodexFirst -RestartCodex -ObserveSeconds 60
 ```
 
-### 3. Aggressive Fix
+### 4. Aggressive Fix
 
 Keep only recent active sessions from today:
 
@@ -76,7 +88,7 @@ Keep only recent active sessions from today:
 powershell -ExecutionPolicy Bypass -File .\codex-cpu-reset.ps1 -Apply -KeepDays 1 -StopCodexFirst -RestartCodex -ObserveSeconds 60
 ```
 
-### 4. Keep Specific Threads
+### 5. Keep Specific Threads
 
 If you know a thread id, preserve it even if it is older than `KeepDays`:
 
@@ -99,10 +111,46 @@ powershell -ExecutionPolicy Bypass -File .\codex-cpu-reset.ps1 -Apply -KeepDays 
 -StopCodexFirst        Stop Codex before moving files.
 -RestartCodex          Start Codex after moving files.
 -ObserveSeconds 60     Measure Codex CPU after restart.
+-CodexHome PATH        Override Codex home. Defaults to %CODEX_HOME%, then %USERPROFILE%\.codex.
+-ColdStorageRoot PATH  Override cold storage. Defaults to %USERPROFILE%\CodexColdStorage.
+-CodexAppId ID         Override the Windows AppsFolder id used for restart.
+-CodexStartCommand CMD Custom command used to start Codex after reset.
+-AllowNonStandardCodexHome
+                       Allow CodexHome paths that do not end in .codex.
 -SkipSessions          Do not move old sessions.
 -SkipArchivedSessions  Do not move archived sessions.
 -SkipBackups           Do not move backups.
 -SkipDesktopLogs       Do not move desktop logs.
+```
+
+## Custom Codex Locations
+
+If your Codex data is not in the default location, pass `-CodexHome`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\codex-cpu-reset.ps1 -CodexHome "D:\CodexData\.codex"
+```
+
+If you intentionally use a Codex home that does not end in `.codex`, add:
+
+```powershell
+-AllowNonStandardCodexHome
+```
+
+## Restart Notes
+
+`-RestartCodex` first tries the default Codex Desktop Windows AppsFolder id:
+
+```text
+OpenAI.Codex_2p2nqsd0c76g0!App
+```
+
+If that does not work on your machine, the script tries to find a Start Menu shortcut containing `Codex`.
+
+You can also provide your own launcher:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\codex-cpu-reset.ps1 -Apply -KeepDays 30 -StopCodexFirst -CodexStartCommand "Start-Process 'C:\Path\To\Codex.exe'" -ObserveSeconds 60
 ```
 
 ## When To Use This
