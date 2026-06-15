@@ -1,0 +1,14 @@
+# Local cold storage and generated output
+CodexColdStorage/
+cpu-observe-*/
+*.log
+
+# PowerShell temporary files
+*.tmp
+*.bak
+
+# OS/editor noise
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/
