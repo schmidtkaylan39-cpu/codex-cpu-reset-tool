@@ -517,6 +517,18 @@ function Get-CodexProcessPath {
   }
 }
 
+function Get-CodexPackageRoot {
+  $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+  foreach ($path in @(Get-CodexProcessPath)) {
+    if ($path -match '^(.*?OpenAI\.Codex_[^\\]+)\\') {
+      $packageRoot = $Matches[1]
+      if ((Test-Path -LiteralPath $packageRoot) -and $seen.Add($packageRoot)) {
+        $packageRoot
+      }
+    }
+  }
+}
+
 function Get-DefenderExclusionPath {
   $candidates = @(
     $CodexHome,
@@ -527,7 +539,7 @@ function Get-DefenderExclusionPath {
     (Join-PathIfBase -Base $env:LOCALAPPDATA -Child 'OpenAI\Codex')
   )
 
-  Get-ExistingFullPath -Path $candidates
+  @(Get-ExistingFullPath -Path $candidates) + @(Get-CodexPackageRoot) | Select-Object -Unique
 }
 
 function Add-DefenderExclusionMitigation {
@@ -545,6 +557,8 @@ function Add-DefenderExclusionMitigation {
     Add-Report -Item 'defender path exclusions' -Action 'would add' -Files $pathCount -Bytes 0 -Destination ($paths -join '; ')
     Add-Report -Item 'defender process exclusions' -Action 'would add' -Files $processCount -Bytes 0 -Destination ($processPaths -join '; ')
     Add-Report -Item 'defender scan cpu limit' -Action "would set to $script:DefenderScanCpuLimitValue" -Files 1 -Bytes 0 -Destination 'ScanAvgCPULoadFactor'
+    Add-Report -Item 'defender scan low cpu priority' -Action 'would enable' -Files 1 -Bytes 0 -Destination 'EnableLowCpuPriority'
+    Add-Report -Item 'defender scan cpu throttling' -Action 'would apply broadly' -Files 1 -Bytes 0 -Destination 'ThrottleForScheduledScanOnly'
     return
   }
 
@@ -602,6 +616,29 @@ function Add-DefenderExclusionMitigation {
   }
   else {
     Add-Report -Item 'defender scan cpu limit' -Action 'skipped invalid value' -Files 1 -Bytes 0 -Destination ([string]$script:DefenderScanCpuLimitValue)
+  }
+
+  if ($PSCmdlet.ShouldProcess('Microsoft Defender', 'Enable low CPU priority for scans')) {
+    try {
+      Set-MpPreference -EnableLowCpuPriority $true -ErrorAction Stop
+      Add-Report -Item 'defender scan low cpu priority' -Action 'enabled' -Files 1 -Bytes 0 -Destination 'EnableLowCpuPriority'
+    }
+    catch {
+      Add-ResetError -Stage 'defender-low-cpu-priority' -Message $_.Exception.Message
+      Add-Report -Item 'defender scan low cpu priority' -Action 'failed' -Files 1 -Bytes 0
+    }
+  }
+
+  if ($PSCmdlet.ShouldProcess('Microsoft Defender', 'Apply CPU throttling beyond scheduled scans')) {
+    try {
+      Set-MpPreference -DisableCpuThrottleOnIdleScans $false -ErrorAction Stop
+      Set-MpPreference -ThrottleForScheduledScanOnly $false -ErrorAction Stop
+      Add-Report -Item 'defender scan cpu throttling' -Action 'applied broadly' -Files 1 -Bytes 0 -Destination 'ThrottleForScheduledScanOnly'
+    }
+    catch {
+      Add-ResetError -Stage 'defender-cpu-throttling' -Message $_.Exception.Message
+      Add-Report -Item 'defender scan cpu throttling' -Action 'failed' -Files 1 -Bytes 0
+    }
   }
 
   Add-Report -Item 'defender path exclusions' -Action 'added' -Files $addedPaths -Bytes 0 -Destination ($paths -join '; ')

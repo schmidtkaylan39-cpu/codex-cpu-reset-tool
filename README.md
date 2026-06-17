@@ -151,7 +151,13 @@ Then run PowerShell as Administrator and apply:
 powershell -ExecutionPolicy Bypass -File .\codex-cpu-reset.ps1 -Apply -AddDefenderExclusions
 ```
 
-This adds exclusions for existing Codex state folders and currently running Codex executable paths. It also sets Defender's average scan CPU limit to `20` by default.
+This adds exclusions for existing Codex state folders, the currently running Codex package directory, and currently running Codex executable paths. This matters because Codex Desktop updates can install into a new `OpenAI.Codex_<version>` directory, making older executable exclusions stale.
+
+It also sets Defender's average scan CPU limit to `20` by default and enables low-priority scan settings. If Defender still spikes, use a lower limit:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\codex-cpu-reset.ps1 -Apply -AddDefenderExclusions -DefenderScanCpuLimit 10
+```
 
 ### 8. If Windows Search Is The CPU Source
 

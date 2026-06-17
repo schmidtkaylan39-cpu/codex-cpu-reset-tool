@@ -166,9 +166,12 @@ Describe 'codex-cpu-reset.ps1' {
     $fake = New-FakeCodexHome
     $script:CurrentFakeRoot = $fake.Root
 
-    $output = & $script:ResetScript -AddDefenderExclusions -CodexHome $fake.Codex -ColdStorageRoot $fake.Cold -SkipDesktopLogs 6>&1 | Out-String
+    $output = & $script:ResetScript -AddDefenderExclusions -DefenderScanCpuLimit 10 -CodexHome $fake.Codex -ColdStorageRoot $fake.Cold -SkipDesktopLogs 6>&1 | Out-String
 
     $output | Should -Match 'defender path exclusions'
     $output | Should -Match 'would add'
+    $output | Should -Match 'would set to 10'
+    $output | Should -Match 'defender scan low cpu priority'
+    $output | Should -Match 'would enable'
   }
 }
