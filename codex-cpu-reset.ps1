@@ -529,6 +529,19 @@ function Get-CodexPackageRoot {
   }
 }
 
+function Get-CodexPackageWildcardPath {
+  $programFiles = [Environment]::GetFolderPath('ProgramFiles')
+  if ([string]::IsNullOrWhiteSpace($programFiles)) {
+    $programFiles = 'C:\Program Files'
+  }
+
+  return (Join-Path $programFiles 'WindowsApps\OpenAI.Codex_*')
+}
+
+function Get-CodexStableProcessName {
+  @('Codex.exe', 'codex.exe')
+}
+
 function Get-DefenderExclusionPath {
   $candidates = @(
     $CodexHome,
@@ -539,7 +552,7 @@ function Get-DefenderExclusionPath {
     (Join-PathIfBase -Base $env:LOCALAPPDATA -Child 'OpenAI\Codex')
   )
 
-  @(Get-ExistingFullPath -Path $candidates) + @(Get-CodexPackageRoot) | Select-Object -Unique
+  @(Get-ExistingFullPath -Path $candidates) + @(Get-CodexPackageRoot) + @(Get-CodexPackageWildcardPath) | Select-Object -Unique
 }
 
 function Add-DefenderExclusionMitigation {
@@ -550,12 +563,16 @@ function Add-DefenderExclusionMitigation {
 
   $paths = @(Get-DefenderExclusionPath)
   $processPaths = @(Get-CodexProcessPath)
+  $processNames = @(Get-CodexStableProcessName)
   $pathCount = $paths.Count
   $processCount = $processPaths.Count
+  $processNameCount = $processNames.Count
 
   if (-not $Apply -or $WhatIfPreference) {
     Add-Report -Item 'defender path exclusions' -Action 'would add' -Files $pathCount -Bytes 0 -Destination ($paths -join '; ')
+    Add-Report -Item 'defender codex package wildcard' -Action 'would add' -Files 1 -Bytes 0 -Destination (Get-CodexPackageWildcardPath)
     Add-Report -Item 'defender process exclusions' -Action 'would add' -Files $processCount -Bytes 0 -Destination ($processPaths -join '; ')
+    Add-Report -Item 'defender process-name exclusions' -Action 'would add' -Files $processNameCount -Bytes 0 -Destination ($processNames -join '; ')
     Add-Report -Item 'defender scan cpu limit' -Action "would set to $script:DefenderScanCpuLimitValue" -Files 1 -Bytes 0 -Destination 'ScanAvgCPULoadFactor'
     Add-Report -Item 'defender scan low cpu priority' -Action 'would enable' -Files 1 -Bytes 0 -Destination 'EnableLowCpuPriority'
     Add-Report -Item 'defender scan cpu throttling' -Action 'would apply broadly' -Files 1 -Bytes 0 -Destination 'ThrottleForScheduledScanOnly'
@@ -565,19 +582,20 @@ function Add-DefenderExclusionMitigation {
   if (-not (Test-CurrentUserAdministrator)) {
     $message = 'Run PowerShell as Administrator to add Microsoft Defender exclusions.'
     Add-ResetError -Stage 'defender-exclusions' -Message $message
-    Add-Report -Item 'defender exclusions' -Action 'requires administrator' -Files ($pathCount + $processCount) -Bytes 0
+    Add-Report -Item 'defender exclusions' -Action 'requires administrator' -Files ($pathCount + $processCount + $processNameCount) -Bytes 0
     return
   }
 
   if (-not (Get-Command Add-MpPreference -ErrorAction SilentlyContinue)) {
     $message = 'Add-MpPreference is unavailable on this system.'
     Add-ResetError -Stage 'defender-exclusions' -Message $message
-    Add-Report -Item 'defender exclusions' -Action 'unavailable' -Files ($pathCount + $processCount) -Bytes 0
+    Add-Report -Item 'defender exclusions' -Action 'unavailable' -Files ($pathCount + $processCount + $processNameCount) -Bytes 0
     return
   }
 
   $addedPaths = 0
   $addedProcesses = 0
+  $addedProcessNames = 0
   foreach ($path in $paths) {
     if (-not $PSCmdlet.ShouldProcess($path, 'Add Microsoft Defender path exclusion')) { continue }
 
@@ -599,6 +617,18 @@ function Add-DefenderExclusionMitigation {
     }
     catch {
       Add-ResetError -Stage 'defender-process-exclusion' -Source $path -Message $_.Exception.Message
+    }
+  }
+
+  foreach ($name in $processNames) {
+    if (-not $PSCmdlet.ShouldProcess($name, 'Add Microsoft Defender process-name exclusion')) { continue }
+
+    try {
+      Add-MpPreference -ExclusionProcess $name -ErrorAction Stop
+      $addedProcessNames++
+    }
+    catch {
+      Add-ResetError -Stage 'defender-process-name-exclusion' -Source $name -Message $_.Exception.Message
     }
   }
 
@@ -642,7 +672,9 @@ function Add-DefenderExclusionMitigation {
   }
 
   Add-Report -Item 'defender path exclusions' -Action 'added' -Files $addedPaths -Bytes 0 -Destination ($paths -join '; ')
+  Add-Report -Item 'defender codex package wildcard' -Action 'added' -Files 1 -Bytes 0 -Destination (Get-CodexPackageWildcardPath)
   Add-Report -Item 'defender process exclusions' -Action 'added' -Files $addedProcesses -Bytes 0 -Destination ($processPaths -join '; ')
+  Add-Report -Item 'defender process-name exclusions' -Action 'added' -Files $addedProcessNames -Bytes 0 -Destination ($processNames -join '; ')
 }
 
 function Set-WindowsSearchMitigation {

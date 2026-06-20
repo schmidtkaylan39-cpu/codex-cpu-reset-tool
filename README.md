@@ -151,7 +151,9 @@ Then run PowerShell as Administrator and apply:
 powershell -ExecutionPolicy Bypass -File .\codex-cpu-reset.ps1 -Apply -AddDefenderExclusions
 ```
 
-This adds exclusions for existing Codex state folders, the currently running Codex package directory, and currently running Codex executable paths. This matters because Codex Desktop updates can install into a new `OpenAI.Codex_<version>` directory, making older executable exclusions stale.
+This adds exclusions for existing Codex state folders, the currently running Codex package directory, a narrow `OpenAI.Codex_*` package wildcard, currently running Codex executable paths, and stable Codex process names (`Codex.exe`, `codex.exe`). This matters because Codex Desktop updates can install into a new `OpenAI.Codex_<version>` directory, making older executable exclusions stale.
+
+Process-name exclusions reduce repeated Defender scans of files opened by Codex across app updates. Only use this for Codex installations you trust.
 
 It also sets Defender's average scan CPU limit to `20` by default and enables low-priority scan settings. If Defender still spikes, use a lower limit:
 

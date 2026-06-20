@@ -173,5 +173,7 @@ Describe 'codex-cpu-reset.ps1' {
     $output | Should -Match 'would set to 10'
     $output | Should -Match 'defender scan low cpu priority'
     $output | Should -Match 'would enable'
+    $output | Should -Match 'defender codex package wildcard'
+    $output | Should -Match 'defender process-name exclusions'
   }
 }
