@@ -176,4 +176,16 @@ Describe 'codex-cpu-reset.ps1' {
     $output | Should -Match 'defender codex package wildcard'
     $output | Should -Match 'defender process-name exclusions'
   }
+
+  It 'can refresh Defender exclusions without state cleanup' {
+    $fake = New-FakeCodexHome
+    $script:CurrentFakeRoot = $fake.Root
+
+    $output = & $script:ResetScript -AddDefenderExclusions -OnlyDefenderExclusions -DefenderScanCpuLimit 10 -CodexHome $fake.Codex -ColdStorageRoot $fake.Cold -SkipDesktopLogs 6>&1 | Out-String
+
+    $output | Should -Match 'defender path exclusions'
+    $output | Should -Match 'defender-only mode'
+    $output | Should -Not -Match 'cache\\s+would move'
+    $output | Should -Not -Match 'logs_2\\.sqlite'
+  }
 }

@@ -42,6 +42,7 @@ param(
   [string]$CodexAppId = $(if ($env:CODEX_APP_ID) { $env:CODEX_APP_ID } else { 'OpenAI.Codex_2p2nqsd0c76g0!App' }),
   [string]$CodexStartCommand = '',
   [switch]$AddDefenderExclusions,
+  [switch]$OnlyDefenderExclusions,
   [int]$DefenderScanCpuLimit = 20,
   [switch]$DisableWindowsSearch,
   [switch]$AllowNonStandardCodexHome,
@@ -53,6 +54,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $script:AddDefenderExclusionsRequested = [bool]$AddDefenderExclusions
+$script:OnlyDefenderExclusionsRequested = [bool]$OnlyDefenderExclusions
 $script:DefenderScanCpuLimitValue = $DefenderScanCpuLimit
 $script:DisableWindowsSearchRequested = [bool]$DisableWindowsSearch
 
@@ -992,6 +994,28 @@ Write-Step 'Collecting reset actions'
 
 Set-WindowsSearchMitigation
 Add-DefenderExclusionMitigation
+
+if ($script:OnlyDefenderExclusionsRequested) {
+  Add-Report -Item 'defender-only mode' -Action 'skip state cleanup' -Files 0 -Bytes 0 -Destination $CodexHome
+  Write-Step 'Summary'
+  $script:Report | Format-Table -AutoSize
+
+  if ($Apply) {
+    Save-RunArtifact
+    Write-Line ''
+    Write-Line 'Defender exclusions refreshed. State cleanup was skipped by -OnlyDefenderExclusions.'
+    if ($script:ManifestPath) { Write-Line "Manifest: $script:ManifestPath" }
+    if ($script:ReportPath) { Write-Line "Report: $script:ReportPath" }
+    if ($script:RestorePath) { Write-Line "Restore script: $script:RestorePath" }
+    if ($script:ErrorPath) { Write-Line "Errors: $script:ErrorPath" }
+  }
+  else {
+    Write-Line ''
+    Write-Line 'Dry run only. Re-run with -Apply to refresh Defender exclusions.'
+  }
+
+  return
+}
 
 if (-not $SkipDesktopLogs) {
   Move-DesktopLog

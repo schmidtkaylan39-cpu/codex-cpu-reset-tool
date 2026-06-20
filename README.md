@@ -161,6 +161,12 @@ It also sets Defender's average scan CPU limit to `20` by default and enables lo
 powershell -ExecutionPolicy Bypass -File .\codex-cpu-reset.ps1 -Apply -AddDefenderExclusions -DefenderScanCpuLimit 10
 ```
 
+To refresh only Defender exclusions without moving logs, cache, sessions, or any Codex state:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\codex-cpu-reset.ps1 -Apply -AddDefenderExclusions -OnlyDefenderExclusions -DefenderScanCpuLimit 10
+```
+
 ### 8. If Windows Search Is The CPU Source
 
 If Task Manager shows `Microsoft Windows Search Indexer`, `SearchIndexer.exe`, `SearchProtocolHost.exe`, or `SearchFilterHost.exe` repeatedly returning after Codex cleanup, first preview:
@@ -194,6 +200,8 @@ This stops `WSearch` and changes it to `Disabled`. Windows Start menu search sti
 -CodexStartCommand CMD Custom command used to start Codex after reset.
 -AddDefenderExclusions
                        Add Microsoft Defender exclusions for Codex folders/processes. Requires Administrator with -Apply.
+-OnlyDefenderExclusions
+                       With -AddDefenderExclusions, refresh Defender settings only and skip all state cleanup.
 -DefenderScanCpuLimit 20
                        Set Defender scan CPU limit when -AddDefenderExclusions is used.
 -DisableWindowsSearch Stop and disable Windows Search indexing. Requires Administrator with -Apply.
