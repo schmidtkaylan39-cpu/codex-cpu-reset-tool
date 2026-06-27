@@ -188,4 +188,16 @@ Describe 'codex-cpu-reset.ps1' {
     $output | Should -Not -Match 'cache\\s+would move'
     $output | Should -Not -Match 'logs_2\\.sqlite'
   }
+
+  It 'can preview installing the Defender refresh scheduled task' {
+    $fake = New-FakeCodexHome
+    $script:CurrentFakeRoot = $fake.Root
+
+    $output = & $script:ResetScript -AddDefenderExclusions -OnlyDefenderExclusions -InstallDefenderRefreshTask -DefenderRefreshIntervalMinutes 15 -CodexHome $fake.Codex -ColdStorageRoot $fake.Cold -SkipDesktopLogs 6>&1 | Out-String
+
+    $output | Should -Match 'defender refresh task'
+    $output | Should -Match 'would register'
+    $output | Should -Match 'every 15 minutes'
+    $output | Should -Match 'defender-only mode'
+  }
 }

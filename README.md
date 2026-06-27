@@ -167,6 +167,18 @@ To refresh only Defender exclusions without moving logs, cache, sessions, or any
 powershell -ExecutionPolicy Bypass -File .\codex-cpu-reset.ps1 -Apply -AddDefenderExclusions -OnlyDefenderExclusions -DefenderScanCpuLimit 10
 ```
 
+If Codex Desktop updates frequently and Defender starts scanning the new package path again, install an automatic refresh task from an Administrator PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\codex-cpu-reset.ps1 -Apply -AddDefenderExclusions -OnlyDefenderExclusions -DefenderScanCpuLimit 10 -InstallDefenderRefreshTask
+```
+
+The task runs as `SYSTEM` at startup, at logon, and every 15 minutes. It only refreshes Defender exclusions and scan CPU settings; it does not move logs, cache, sessions, or other Codex state. To change the interval:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\codex-cpu-reset.ps1 -Apply -AddDefenderExclusions -OnlyDefenderExclusions -DefenderScanCpuLimit 10 -InstallDefenderRefreshTask -DefenderRefreshIntervalMinutes 30
+```
+
 ### 8. If Windows Search Is The CPU Source
 
 If Task Manager shows `Microsoft Windows Search Indexer`, `SearchIndexer.exe`, `SearchProtocolHost.exe`, or `SearchFilterHost.exe` repeatedly returning after Codex cleanup, first preview:
@@ -204,6 +216,12 @@ This stops `WSearch` and changes it to `Disabled`. Windows Start menu search sti
                        With -AddDefenderExclusions, refresh Defender settings only and skip all state cleanup.
 -DefenderScanCpuLimit 20
                        Set Defender scan CPU limit when -AddDefenderExclusions is used.
+-InstallDefenderRefreshTask
+                       Register a SYSTEM scheduled task that refreshes Defender exclusions after Codex updates.
+-DefenderRefreshTaskName
+                       Scheduled task name. Defaults to "Codex Defender Exclusion Refresh".
+-DefenderRefreshIntervalMinutes 15
+                       Re-run the Defender refresh task every N minutes. Valid range: 5-1440.
 -DisableWindowsSearch Stop and disable Windows Search indexing. Requires Administrator with -Apply.
 -AllowNonStandardCodexHome
                        Allow CodexHome paths that do not end in .codex.

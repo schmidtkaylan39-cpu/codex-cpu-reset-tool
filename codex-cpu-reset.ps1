@@ -44,6 +44,9 @@ param(
   [switch]$AddDefenderExclusions,
   [switch]$OnlyDefenderExclusions,
   [int]$DefenderScanCpuLimit = 20,
+  [switch]$InstallDefenderRefreshTask,
+  [string]$DefenderRefreshTaskName = 'Codex Defender Exclusion Refresh',
+  [int]$DefenderRefreshIntervalMinutes = 15,
   [switch]$DisableWindowsSearch,
   [switch]$AllowNonStandardCodexHome,
   [switch]$SkipSessions,
@@ -56,6 +59,9 @@ $ErrorActionPreference = 'Stop'
 $script:AddDefenderExclusionsRequested = [bool]$AddDefenderExclusions
 $script:OnlyDefenderExclusionsRequested = [bool]$OnlyDefenderExclusions
 $script:DefenderScanCpuLimitValue = $DefenderScanCpuLimit
+$script:InstallDefenderRefreshTaskRequested = [bool]$InstallDefenderRefreshTask
+$script:DefenderRefreshTaskNameValue = $DefenderRefreshTaskName
+$script:DefenderRefreshIntervalMinutesValue = $DefenderRefreshIntervalMinutes
 $script:DisableWindowsSearchRequested = [bool]$DisableWindowsSearch
 
 function Write-Step {
@@ -679,6 +685,96 @@ function Add-DefenderExclusionMitigation {
   Add-Report -Item 'defender process-name exclusions' -Action 'added' -Files $addedProcessNames -Bytes 0 -Destination ($processNames -join '; ')
 }
 
+function ConvertTo-PowerShellQuotedArgument {
+  param([Parameter(Mandatory = $true)][string]$Value)
+
+  return '"' + ($Value -replace '"', '\"') + '"'
+}
+
+function Install-DefenderRefreshTask {
+  [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
+  param()
+
+  if (-not $script:InstallDefenderRefreshTaskRequested) { return }
+
+  $interval = $script:DefenderRefreshIntervalMinutesValue
+  if ($interval -lt 5 -or $interval -gt 1440) {
+    Add-ResetError -Stage 'defender-refresh-task' -Message 'Defender refresh interval must be between 5 and 1440 minutes.'
+    Add-Report -Item 'defender refresh task' -Action 'skipped invalid interval' -Files 1 -Bytes 0 -Destination ([string]$interval)
+    return
+  }
+
+  $scriptPath = if (-not [string]::IsNullOrWhiteSpace($PSCommandPath)) {
+    $PSCommandPath
+  }
+  else {
+    $MyInvocation.MyCommand.Path
+  }
+
+  if ([string]::IsNullOrWhiteSpace($scriptPath) -or -not (Test-Path -LiteralPath $scriptPath)) {
+    Add-ResetError -Stage 'defender-refresh-task' -Message 'Could not resolve the current script path for scheduled task installation.'
+    Add-Report -Item 'defender refresh task' -Action 'failed' -Files 1 -Bytes 0
+    return
+  }
+
+  $taskName = $script:DefenderRefreshTaskNameValue
+  $taskSummary = "$taskName every $interval minutes"
+
+  if (-not $Apply -or $WhatIfPreference) {
+    Add-Report -Item 'defender refresh task' -Action 'would register' -Files 1 -Bytes 0 -Destination $taskSummary
+    return
+  }
+
+  if (-not (Test-CurrentUserAdministrator)) {
+    $message = 'Run PowerShell as Administrator to install the Defender refresh scheduled task.'
+    Add-ResetError -Stage 'defender-refresh-task' -Message $message
+    Add-Report -Item 'defender refresh task' -Action 'requires administrator' -Files 1 -Bytes 0 -Destination $taskName
+    return
+  }
+
+  if (-not (Get-Command Register-ScheduledTask -ErrorAction SilentlyContinue)) {
+    $message = 'Register-ScheduledTask is unavailable on this system.'
+    Add-ResetError -Stage 'defender-refresh-task' -Message $message
+    Add-Report -Item 'defender refresh task' -Action 'unavailable' -Files 1 -Bytes 0 -Destination $taskName
+    return
+  }
+
+  $argumentParts = @(
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy', 'Bypass',
+    '-File', (ConvertTo-PowerShellQuotedArgument -Value $scriptPath),
+    '-Apply',
+    '-AddDefenderExclusions',
+    '-OnlyDefenderExclusions',
+    '-DefenderScanCpuLimit', ([string]$script:DefenderScanCpuLimitValue),
+    '-CodexHome', (ConvertTo-PowerShellQuotedArgument -Value $CodexHome),
+    '-ColdStorageRoot', (ConvertTo-PowerShellQuotedArgument -Value $ColdStorageRoot)
+  )
+
+  $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ($argumentParts -join ' ')
+  $startupTrigger = New-ScheduledTaskTrigger -AtStartup
+  $logonTrigger = New-ScheduledTaskTrigger -AtLogOn
+  $repeatTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes $interval) -RepetitionDuration (New-TimeSpan -Days 3650)
+  $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -RunLevel Highest
+  $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
+
+  if (-not $PSCmdlet.ShouldProcess($taskName, "Register Defender refresh task every $interval minutes")) {
+    Add-Report -Item 'defender refresh task' -Action 'whatif' -Files 1 -Bytes 0 -Destination $taskSummary
+    return
+  }
+
+  try {
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($startupTrigger, $logonTrigger, $repeatTrigger) -Principal $principal -Settings $settings -Description 'Refresh Microsoft Defender Codex exclusions after Codex Desktop updates.' -Force | Out-Null
+    Start-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    Add-Report -Item 'defender refresh task' -Action 'registered' -Files 1 -Bytes 0 -Destination $taskSummary
+  }
+  catch {
+    Add-ResetError -Stage 'defender-refresh-task' -Source $taskName -Message $_.Exception.Message
+    Add-Report -Item 'defender refresh task' -Action 'failed' -Files 1 -Bytes 0 -Destination $taskName
+  }
+}
+
 function Set-WindowsSearchMitigation {
   [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
   param()
@@ -994,6 +1090,7 @@ Write-Step 'Collecting reset actions'
 
 Set-WindowsSearchMitigation
 Add-DefenderExclusionMitigation
+Install-DefenderRefreshTask
 
 if ($script:OnlyDefenderExclusionsRequested) {
   Add-Report -Item 'defender-only mode' -Action 'skip state cleanup' -Files 0 -Bytes 0 -Destination $CodexHome
